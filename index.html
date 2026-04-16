@@ -30,7 +30,7 @@ tr.data-row:hover td { background: #1a2235 !important; }
 <div style="background:linear-gradient(180deg,#0d1424 0%,#08090f 100%);border-bottom:1px solid #1a2540;padding:24px 32px 20px">
   <div style="max-width:1600px;margin:0 auto">
     <h1 style="font-size:22px;font-weight:800;color:white;letter-spacing:-.3px">Remote Latinos <span style="color:#6366f1">—</span> HC Dashboard</h1>
-    <p style="font-size:12px;color:#475569;margin-top:4px">Last updated: Apr 16, 2026, 01:43 AM &nbsp;·&nbsp; 546 records</p>
+    <p style="font-size:12px;color:#475569;margin-top:4px">Last updated: Apr 16, 2026, 01:55 AM &nbsp;·&nbsp; 546 records</p>
   </div>
 </div>
 
@@ -478,6 +478,13 @@ function renderClosed() {
       : dsSince(c._latestDate);
   });
 
+  // Separate Cold Leads: Month 3+, ≥10 attempts, 0 real conversations
+  function isColdLead(c) {
+    return c.phase === 'Month 3+ (Monthly)' && (c.m3attempts || 0) >= 10 && !(c.m3convos > 0);
+  }
+  var coldLeads = base.filter(isColdLead);
+  base = base.filter(function(c) { return !isColdLead(c); });
+
   // Split: clients with contact data vs clients with no data at all
   var withData = base.filter(function(c) { return c._daysNoContact !== null && c._daysNoContact !== undefined; });
   var noData   = base.filter(function(c) { return c._daysNoContact === null || c._daysNoContact === undefined; });
@@ -496,18 +503,21 @@ function renderClosed() {
     mkCard('closed','zero','0 Check-ins', zeroChk, '#fb923c') +
     mkCard('closed','no30','No Contact +30d', no30, '#c084fc') +
     mkCard('closed','norecord','No Record', noRecord, '#94a3b8') +
+    mkCard('closed','coldleads','Cold Leads', coldLeads.length, '#f59e0b') +
     '</div>';
 
   var cf = cardFilters['closed'];
   var mainRows  = withData;
   var showMain  = true;
   var showNoRec = (cf === null || cf === undefined || cf === 'all' || cf === 'norecord');
+  var showCold  = (cf === null || cf === undefined || cf === 'all' || cf === 'coldleads');
 
   if (cf && cf !== 'all') {
-    if      (cf === 'overdue')  { mainRows = withData.filter(function(c) { return c.checkinStatus === 'red'; }); showMain = true; showNoRec = false; }
-    else if (cf === 'zero')     { mainRows = withData.filter(function(c) { return !c.totalCheckins; });          showMain = true; showNoRec = false; }
-    else if (cf === 'no30')     { mainRows = withData.filter(function(c) { return c._daysNoContact > 30; });     showMain = true; showNoRec = false; }
-    else if (cf === 'norecord') { showMain = false; showNoRec = true; }
+    if      (cf === 'overdue')   { mainRows = withData.filter(function(c) { return c.checkinStatus === 'red'; }); showMain = true; showNoRec = false; showCold = false; }
+    else if (cf === 'zero')      { mainRows = withData.filter(function(c) { return !c.totalCheckins; });          showMain = true; showNoRec = false; showCold = false; }
+    else if (cf === 'no30')      { mainRows = withData.filter(function(c) { return c._daysNoContact > 30; });     showMain = true; showNoRec = false; showCold = false; }
+    else if (cf === 'norecord')  { showMain = false; showNoRec = true;  showCold = false; }
+    else if (cf === 'coldleads') { showMain = false; showNoRec = false; showCold = true;  }
   }
 
   function closedThead() {
@@ -595,6 +605,48 @@ function renderClosed() {
     });
 
     html += '</tbody></table></div>';
+  }
+
+  // ── Sección "Cold Leads" ─────────────────────────────────────────────────
+  if (showCold && coldLeads.length > 0) {
+    html += '<div style="display:flex;align-items:center;gap:12px;margin:36px 0 14px">' +
+      '<div style="width:4px;height:22px;background:#f59e0b;border-radius:2px"></div>' +
+      '<span style="font-size:13px;font-weight:700;color:#fbbf24">Cold Leads</span>' +
+      '<span style="background:#1c1200;color:#f59e0b;border:1px solid #92400e;padding:1px 9px;border-radius:20px;font-size:11px">' + coldLeads.length + '</span>' +
+      '<span style="font-size:11px;color:#52525b">Month 3+ · 10+ attempts · 0 real conversations</span>' +
+      '</div>';
+
+    coldLeads.sort(function(a,b) { return (b.m3attempts||0) - (a.m3attempts||0); });
+
+    html += '<div style="overflow-x:auto;border-radius:12px;border:1px solid #2a2010">' +
+      '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+      closedThead() + '<tbody>';
+
+    coldLeads.forEach(function(c, i) {
+      var bg = i % 2 === 0 ? '#0e1018' : 'transparent';
+      var dsp = c.daysSincePlacement !== null ? c.daysSincePlacement + 'd' : '—';
+      var noShow = (c.noShows||0) > 0 ? '<b style="color:#f87171">' + c.noShows + '</b>' : '<span style="color:#52525b">0</span>';
+      html += '<tr style="background:' + bg + ';border-left:3px solid #27272a;transition:background .15s" class="data-row">' +
+        tdCell('<span style="color:#52525b">' + (i+1) + '</span>') +
+        tdCell('<span style="color:#a1a1aa;font-weight:600">' + c.name + '</span>') +
+        tdCell(hcPill(c)) +
+        tdCell('<span style="color:#52525b;font-size:11px">' + (c.typeOfClient||'—') + '</span>') +
+        tdCell('<span style="color:#52525b;font-size:11px">' + (c.phase||'—') + '</span>') +
+        tdCell('<span style="color:#60a5fa">' + dsp + '</span>') +
+        tdCell('<span style="color:#71717a">' + (c.totalCheckins||0) + '</span>','text-align:center') +
+        tdCell(noShow,'text-align:center') +
+        tdCell('<span style="color:#52525b">' + fmtDate(c.lastCheckinDate) + '</span>') +
+        tdCell(ckStatusBadge(c)) +
+        tdCell(bestCell(c)) +
+        tdCell(daysContactBadge(c._daysNoContact)) +
+        tdCell(m3attCell(c),'text-align:center') +
+        tdCell(m3conCell(c),'text-align:center') +
+        tdCell(comment(c,60)) +
+        '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    html += '<div style="padding:8px 4px;font-size:11px;color:#475569;margin-top:8px">' + coldLeads.length + ' cold leads</div>';
   }
 
   document.getElementById('table-closed').innerHTML = html;
