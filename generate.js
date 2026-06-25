@@ -1176,7 +1176,29 @@ async function main() {
 
   console.log('Done! ' + enriched.length + ' contacts total.');
 
+  await updateLocalTargets();
   await deployToGitHub();
+}
+
+async function updateLocalTargets() {
+  try {
+    const sheets = await getSheets();
+    const HC_UNIQUE_TARGET_CELL = { 'Matt Chavez': 'C9', 'Paola Sella': 'G9', 'Mateo Cortazar': 'K9' };
+    const HCS = ['Matt Chavez', 'Paola Sella', 'Mateo Cortazar'];
+    const res = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId: HC_METRICS_ID,
+      ranges: HCS.map(hc => 'WEEKLY TRACKER!' + HC_UNIQUE_TARGET_CELL[hc])
+    });
+    const hcTargets = {};
+    HCS.forEach((hc, i) => {
+      const raw = (res.data.valueRanges[i]?.values?.[0]?.[0]) ?? 0;
+      hcTargets[hc] = parseInt(raw) || 0;
+    });
+    fs.writeFileSync('/Users/mateocortazar/ghl-dashboard/hc_targets.json', JSON.stringify(hcTargets, null, 2));
+    console.log('hc_targets.json actualizado:', JSON.stringify(hcTargets));
+  } catch (err) {
+    console.error('Error actualizando hc_targets.json (no bloquea el deploy):', err.message);
+  }
 }
 
 async function updateHCMetricsTracker(sheets, enriched, checkinsByClient, checkinNameToContact) {
