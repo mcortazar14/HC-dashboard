@@ -1,0 +1,14 @@
+.env
+credentials.json
+node_modules/
+data.csv
+*.backup
+*.backup2
+*.backup3
+*.backup4
+*.backup5
+*.backup6
+.netlify/
+logs/
+.DS_Store
+backend/
