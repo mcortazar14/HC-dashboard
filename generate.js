@@ -29,7 +29,7 @@ const HC_METRICS_ID     = '1WC22XiU199p8N8L8a2i0wtrynqT7j49_o-A3fhpQsfc';
 const CONSULTANTS = [
   { name: 'Mateo Cortazar', assignedTo: 'Q0aVHyBbFhqJxWuEKLMt', userId: 'Q0aVHyBbFhqJxWuEKLMt', color: '#6366f1' },
   { name: 'Matt Chavez',    assignedTo: 'uqAeFfwbHnH0lCwSvprz', userId: 'uqAeFfwbHnH0lCwSvprz', color: '#06b6d4' },
-  { name: 'Paola Sella',    assignedTo: 'lLAobNN6pGwCHqXYXBMr', userId: 'lLAobNN6pGwCHqXYXBMr', color: '#10b981' }
+  { name: 'Maria Fernanda Franco',    assignedTo: 'YNlj27LBFv74CKLrh1zy', userId: 'YNlj27LBFv74CKLrh1zy', color: '#10b981' }
 ];
 
 function ghl(path, cb) {
@@ -204,7 +204,7 @@ async function getSheetData(spreadsheetId, range) {
 }
 
 function generateClientId(name, hc) {
-  const input = name.toLowerCase().trim() + hc.toLowerCase().trim();
+  const input = name.toLowerCase().trim();
   return crypto.createHash('md5').update(input).digest('hex').substring(0, 12);
 }
 
@@ -543,12 +543,13 @@ async function syncUpsellSheet(sheets, enriched) {
   const rows = res.data.values || [];
   const todayStr = new Date().toISOString().split('T')[0];
 
-  // Construir mapa ID → {stage, notas, stageSince, lastExternalContact, externalChannel, prevStage, clientResponded}
+  // Construir mapa ID → data, y también mapa por nombre normalizado como fallback
   const existingMap = {};
+  const existingByName = {};
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const id = row[0] || '';
-    if (id) existingMap[id] = {
+    const entry = {
       stage: row[8] || 'N/A',
       notas: row[9] || '',
       stageSince: row[10] || '',
@@ -557,12 +558,16 @@ async function syncUpsellSheet(sheets, enriched) {
       prevStage: row[13] || null,
       clientResponded: row[14] || ''
     };
+    if (id) existingMap[id] = entry;
+    const name = (row[1] || '').toLowerCase().trim();
+    if (name) existingByName[name] = entry;
   }
 
+  // DEBUG: count non-NA stages in existingMap/existingByName
   // Construir filas nuevas preservando columnas manuales (stage, notas, stageSince, L, M, O)
   const newRows = enriched.map(contact => {
     const id = generateClientId(contact.name, contact.consultant);
-    const existing = existingMap[id];
+    const existing = existingMap[id] || existingByName[contact.name.toLowerCase().trim()];
     const stage = existing ? existing.stage : 'N/A';
     const notas = existing ? existing.notas : '';
     // Comparar stage actual (col I, puesto por el usuario) contra prevStage (col N, guardado en el run anterior)
@@ -732,11 +737,15 @@ function fetchFromAPI() {
         apiRequest('GET', '/api/status', (err, status) => {
           if (err) { console.log('Poll error:', err.message, '— retrying in 30s'); setTimeout(poll, 30000); return; }
           console.log('Status:', JSON.stringify(status));
-          if (status.isRefreshing || !status.ready) {
+          const waited = Date.now() - startedAt;
+          // If ready with data, proceed even if still refreshing (Railway can get stuck)
+          const useAvailable = status.ready && status.count > 0 && (waited > 3 * 60 * 1000 || !status.isRefreshing);
+          if (!useAvailable) {
             setTimeout(poll, 30000);
           } else {
             // Step 3: fetch the cached data
-            console.log('Data ready — fetching...');
+            if (status.isRefreshing) console.log('Railway stuck in refresh — using available data (' + status.count + ' contacts)...');
+            else console.log('Data ready — fetching...');
             apiRequest('GET', '/api/data', (err, result) => {
               if (err) return reject(err);
               if (!result.success) return reject(new Error(result.error || 'API error'));
@@ -757,6 +766,8 @@ async function main() {
 
   // Fetch all enriched data from Railway API (pipeline runs server-side, ~5 min)
   const enriched = await fetchFromAPI();
+  // Migrate cached data: rename Paola Sella → Maria Fernanda Franco
+  enriched.forEach(c => { if (c.consultant === 'Paola Sella') { c.consultant = 'Maria Fernanda Franco'; c.consultantColor = '#10b981'; } });
   console.log('Loaded ' + enriched.length + ' contacts from API.');
 
   if (false) { // legacy local pipeline — kept for reference, not executed
@@ -897,8 +908,8 @@ async function main() {
     }
   }
 
-  const JOB_TEAM_HC    = { 'Team 1': 'Matt Chavez', 'Team 2': 'Paola Sella', 'Team 3': 'Mateo Cortazar' };
-  const HC_COLOR       = { 'Matt Chavez': '#06b6d4', 'Paola Sella': '#10b981', 'Mateo Cortazar': '#6366f1', 'Unassigned': '#94a3b8' };
+  const JOB_TEAM_HC    = { 'Team 1': 'Matt Chavez', 'Team 2': 'Maria Fernanda Franco', 'Team 3': 'Mateo Cortazar' };
+  const HC_COLOR       = { 'Matt Chavez': '#06b6d4', 'Maria Fernanda Franco': '#10b981', 'Mateo Cortazar': '#6366f1', 'Unassigned': '#94a3b8' };
   const STATUS_PRIORITY = ['Open', 'Pending to be launched', 'On Hold', 'Client Unresponsive', 'Closed', 'Canceled'];
 
   const enriched = Object.values(rcrmByClient).map(rcrmEntry => {
@@ -1145,6 +1156,65 @@ async function main() {
   });
   } // end if (false) — legacy local pipeline
 
+  // 5. Sync Upsell Tracker + merge stages into enriched BEFORE generating HTML
+  try {
+    const upsellSheets = await getSheets();
+    await setupSheetIfEmpty(upsellSheets);
+    await applyUpsellStyle(upsellSheets);
+    await handleClosedUpsells(upsellSheets);
+    const trackerMap = await syncUpsellSheet(upsellSheets, enriched);
+
+    // Merge tracker stages into enriched contacts (same logic as legacy pipeline)
+    const todayStr = new Date().toISOString().split('T')[0];
+    enriched.forEach(contact => {
+      const id = generateClientId(contact.name, contact.consultant);
+      const entry = trackerMap[id];
+      const trackerStage = entry ? entry.stage : 'N/A';
+      if (trackerStage && trackerStage !== 'N/A') {
+        contact.upsellStage = trackerStage;
+        contact.upsellStageSince = entry.stageSince || todayStr;
+      } else {
+        contact.upsellStage = 'N/A';
+        contact.upsellStageSince = null;
+      }
+      contact.upsellNotes = entry ? entry.notas : '';
+      contact.daysInStage = contact.upsellStageSince
+        ? Math.floor((new Date() - new Date(contact.upsellStageSince)) / (1000*60*60*24)) : null;
+      contact.lastExternalContact = entry ? entry.lastExternalContact : '';
+      contact.externalChannel    = entry ? entry.externalChannel : '';
+
+      // Re-calculate best contact date now that we have lastExternalContact
+      const sources = [];
+      if (contact.lastContact)        sources.push({ dateStr: contact.lastContact, type: contact.type === 'TYPE_SMS' ? 'SMS' : 'Call', date: parseFlexDate(contact.lastContact) });
+      if (contact.lastCheckinDate)    sources.push({ dateStr: contact.lastCheckinDate, type: 'Check-in', date: parseFlexDate(contact.lastCheckinDate) });
+      if (contact.lastExternalContact) sources.push({ dateStr: contact.lastExternalContact, type: contact.externalChannel || 'External', date: parseFlexDate(contact.lastExternalContact) });
+      if (sources.length > 0) {
+        sources.sort((a, b) => b.date - a.date);
+        contact.bestContactDate = sources[0].dateStr;
+        contact.bestContactType = sources[0].type;
+        contact.bestDaysWithoutContact = Math.floor((new Date() - sources[0].date) / 86400000);
+      }
+
+      // Add upsell tracker contribution to m3 attempts/convos
+      if (contact.m3attempts !== null && contact.closedJobAt) {
+        const phaseOffset = contact.phase === 'Month 3+ (Monthly)' ? 61 : contact.phase === 'Month 2 (Bi-Weekly)' ? 31 : 0;
+        const m3Start = new Date(contact.closedJobAt);
+        m3Start.setDate(m3Start.getDate() + phaseOffset);
+        if (contact.lastExternalContact && parseFlexDate(contact.lastExternalContact) >= m3Start) {
+          contact.m3attempts++;
+        }
+        const crEntry = trackerMap[id];
+        if (crEntry && crEntry.clientResponded) {
+          contact.m3attempts++;
+          if (crEntry.clientResponded === 'Yes') contact.m3convos++;
+        }
+      }
+    });
+    console.log('Upsell stages merged into enriched contacts.');
+  } catch (err) {
+    console.error('Error syncing Upsell Tracker (no bloquea el deploy):', err.message || err);
+  }
+
   // 6. Generate HTML
   const html = generateHTML(enriched);
   fs.writeFileSync('/Users/mateocortazar/ghl-dashboard/index.html', html);
@@ -1176,6 +1246,48 @@ async function main() {
 
   console.log('Done! ' + enriched.length + ' contacts total.');
 
+  // Update HC Metrics Tracker (Google Sheets) with this week's actuals
+  try {
+    const sheets = await getSheets();
+
+    // Read check-ins from Sheets so updateHCMetricsTracker can count this week's activity
+    const checkinRows = await getSheetData(CHECKINS_SHEET_ID, 'Form Responses 1!A:Z');
+    const checkinHeaders = checkinRows[0] || [];
+    const colIdx = {};
+    checkinHeaders.forEach((h, i) => { if (h) colIdx[h.trim()] = i; });
+
+    const checkinsByClient = {};
+    for (let r = 1; r < checkinRows.length; r++) {
+      const row = checkinRows[r];
+      const clientName = row[colIdx['Client Name']] || '';
+      const timestamp   = row[colIdx['Timestamp']] || '';
+      const showedUp    = row[colIdx['Did the Client Show Up?']] || '';
+      const checkinType = row[colIdx['Type of Check-in']] || '';
+      const nextStep    = row[colIdx['Next expected step']] || row[colIdx['Next Expected Step']] || '';
+      const upsellStatus    = row[colIdx['Upsell Status']] || '';
+      const candidateStatus = row[colIdx['Candidate Status']] || '';
+      const meetingDate     = row[colIdx['Date Of Meeting']] || '';
+      if (!clientName) continue;
+      if (!checkinsByClient[clientName]) checkinsByClient[clientName] = [];
+      checkinsByClient[clientName].push({ timestamp, showedUp, checkinType, nextStep, upsellStatus, candidateStatus, meetingDate });
+    }
+
+    // Build check-in name → { hc, id } map from enriched (Railway already did the fuzzy match)
+    const checkinNameToContact = {};
+    for (const c of enriched) {
+      if (c.checkinMatchedName && !checkinNameToContact[c.checkinMatchedName]) {
+        checkinNameToContact[c.checkinMatchedName] = {
+          hc: c.consultant,
+          id: generateClientId(c.name, c.consultant)
+        };
+      }
+    }
+
+    await updateHCMetricsTracker(sheets, enriched, checkinsByClient, checkinNameToContact);
+  } catch (err) {
+    console.error('Error llamando updateHCMetricsTracker desde main:', err.message || err);
+  }
+
   await updateLocalTargets();
   await deployToGitHub();
 }
@@ -1183,8 +1295,8 @@ async function main() {
 async function updateLocalTargets() {
   try {
     const sheets = await getSheets();
-    const HC_UNIQUE_TARGET_CELL = { 'Matt Chavez': 'C9', 'Paola Sella': 'G9', 'Mateo Cortazar': 'K9' };
-    const HCS = ['Matt Chavez', 'Paola Sella', 'Mateo Cortazar'];
+    const HC_UNIQUE_TARGET_CELL = { 'Matt Chavez': 'C9', 'Maria Fernanda Franco': 'G9', 'Mateo Cortazar': 'K9' };
+    const HCS = ['Matt Chavez', 'Maria Fernanda Franco', 'Mateo Cortazar'];
     const res = await sheets.spreadsheets.values.batchGet({
       spreadsheetId: HC_METRICS_ID,
       ranges: HCS.map(hc => 'WEEKLY TRACKER!' + HC_UNIQUE_TARGET_CELL[hc])
@@ -1202,9 +1314,9 @@ async function updateLocalTargets() {
 }
 
 async function updateHCMetricsTracker(sheets, enriched, checkinsByClient, checkinNameToContact) {
-  const HC_CONFIG_COL = { 'Matt Chavez': 'C', 'Paola Sella': 'D', 'Mateo Cortazar': 'E' };
-  const HC_ACTUAL_COL = { 'Matt Chavez': 'D', 'Paola Sella': 'H', 'Mateo Cortazar': 'L' };
-  const HCS = ['Matt Chavez', 'Paola Sella', 'Mateo Cortazar'];
+  const HC_CONFIG_COL = { 'Matt Chavez': 'C', 'Maria Fernanda Franco': 'D', 'Mateo Cortazar': 'E' };
+  const HC_ACTUAL_COL = { 'Matt Chavez': 'D', 'Maria Fernanda Franco': 'H', 'Mateo Cortazar': 'L' };
+  const HCS = ['Matt Chavez', 'Maria Fernanda Franco', 'Mateo Cortazar'];
 
   try {
     console.log('Actualizando HC Metrics Tracker...');
@@ -1292,7 +1404,7 @@ async function updateHCMetricsTracker(sheets, enriched, checkinsByClient, checki
 
     // Read unique-clients-per-week target directly from the tracker (C9, G9, K9).
     // Single source of truth: whatever the HC Metrics Tracker shows is what the Monday list uses.
-    const HC_UNIQUE_TARGET_CELL = { 'Matt Chavez': 'C9', 'Paola Sella': 'G9', 'Mateo Cortazar': 'K9' };
+    const HC_UNIQUE_TARGET_CELL = { 'Matt Chavez': 'C9', 'Maria Fernanda Franco': 'G9', 'Mateo Cortazar': 'K9' };
     const targetReads = await sheets.spreadsheets.values.batchGet({
       spreadsheetId: HC_METRICS_ID,
       ranges: HCS.map(hc => `WEEKLY TRACKER!${HC_UNIQUE_TARGET_CELL[hc]}`),
@@ -1305,15 +1417,15 @@ async function updateHCMetricsTracker(sheets, enriched, checkinsByClient, checki
     fs.writeFileSync('/Users/mateocortazar/ghl-dashboard/hc_targets.json', JSON.stringify(hcTargets, null, 2));
     console.log('  TARGETS: hc_targets.json →', JSON.stringify(hcTargets));
 
-    const HC_TARGET_WEEKLY  = { 'Matt Chavez': 'C', 'Paola Sella': 'G', 'Mateo Cortazar': 'K' };
-    const HC_TARGET_MONTHLY = { 'Matt Chavez': 'C', 'Paola Sella': 'K', 'Mateo Cortazar': 'S' };
+    const HC_TARGET_WEEKLY  = { 'Matt Chavez': 'C', 'Maria Fernanda Franco': 'G', 'Mateo Cortazar': 'K' };
+    const HC_TARGET_MONTHLY = { 'Matt Chavez': 'C', 'Maria Fernanda Franco': 'K', 'Mateo Cortazar': 'S' };
 
     // Formulas that reference CONFIG tab — auto-recalculate when portfolio changes
     const mattA  = '(CONFIG!C22+CONFIG!C23+CONFIG!C24+CONFIG!C25)';
     const paolaA = '(CONFIG!D22+CONFIG!D23+CONFIG!D24+CONFIG!D25)';
     const mateoA = '(CONFIG!E22+CONFIG!E23+CONFIG!E24+CONFIG!E25)';
     const totalA = `(${mattA}+${paolaA}+${mateoA})`;
-    const propFormulas = { 'Matt Chavez': mattA, 'Paola Sella': paolaA, 'Mateo Cortazar': mateoA };
+    const propFormulas = { 'Matt Chavez': mattA, 'Maria Fernanda Franco': paolaA, 'Mateo Cortazar': mateoA };
 
     const dynData = [];
     HCS.forEach(hc => {
@@ -1601,7 +1713,7 @@ tr.data-row:hover td { background: #1a2235 !important; }
     <button id="hc-all" class="hc-btn active" onclick="setHC('all')" style="background:#6366f1;border:1px solid #6366f1;color:white;padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit">All</button>
     <button id="hc-mateo" class="hc-btn" onclick="setHC('Mateo Cortazar')" style="background:#0f1520;border:1px solid #6366f144;color:#6366f1;padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit">Mateo</button>
     <button id="hc-matt" class="hc-btn" onclick="setHC('Matt Chavez')" style="background:#0f1520;border:1px solid #06b6d444;color:#06b6d4;padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit">Matt</button>
-    <button id="hc-paola" class="hc-btn" onclick="setHC('Paola Sella')" style="background:#0f1520;border:1px solid #10b98144;color:#10b981;padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit">Paola</button>
+    <button id="hc-maria" class="hc-btn" onclick="setHC('Maria Fernanda Franco')" style="background:#0f1520;border:1px solid #10b98144;color:#10b981;padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit">Maria Fernanda</button>
   </div>
 </div>
 
@@ -1735,7 +1847,7 @@ function priorityDot(idx, total) {
   return '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + color + ';margin-right:6px"></span>';
 }
 
-var HC_COLORS = {'Mateo Cortazar':'#6366f1','Matt Chavez':'#06b6d4','Paola Sella':'#10b981'};
+var HC_COLORS = {'Mateo Cortazar':'#6366f1','Matt Chavez':'#06b6d4','Maria Fernanda Franco':'#10b981'};
 var STAGE_ORDER = {Active:0,Pitched:1,Detected:2,Seeded:3,Closed:4};
 
 function hcPill(c) {

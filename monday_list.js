@@ -8,9 +8,9 @@ const CSV_PATH      = '/Users/mateocortazar/ghl-dashboard/data.csv';
 const ROTATION_PATH = '/Users/mateocortazar/ghl-dashboard/last_week_lists.json';
 const LOGS_DIR      = '/Users/mateocortazar/ghl-dashboard/logs';
 const DM_TARGET     = 'U07EMR4R3DJ'; // Mateo's Slack user ID — DM fallback until #hc-monday-list exists
-const HCS           = ['Matt Chavez', 'Paola Sella', 'Mateo Cortazar'];
-const ROTATION_KEYS = { 'Matt Chavez': 'matt', 'Paola Sella': 'paola', 'Mateo Cortazar': 'mateo' };
-const HC_TARGETS_FALLBACK = { 'Matt Chavez': 44, 'Paola Sella': 37, 'Mateo Cortazar': 38 };
+const HCS           = ['Matt Chavez', 'Maria Fernanda Franco', 'Mateo Cortazar'];
+const ROTATION_KEYS = { 'Matt Chavez': 'matt', 'Maria Fernanda Franco': 'mariafernanda', 'Mateo Cortazar': 'mateo' };
+const HC_TARGETS_FALLBACK = { 'Matt Chavez': 44, 'Maria Fernanda Franco': 37, 'Mateo Cortazar': 38 };
 const TARGETS_PATH  = '/Users/mateocortazar/ghl-dashboard/hc_targets.json';
 let HC_TARGETS = HC_TARGETS_FALLBACK;
 try {
@@ -402,7 +402,7 @@ async function main() {
   console.log(`Loaded ${clients.length} clients from data.csv`);
 
   // Load rotation
-  let lastWeekData = { week_of: null, matt: [], jorge: [], mateo: [] };
+  let lastWeekData = { week_of: null, matt: [], mariafernanda: [], mateo: [] };
   if (fs.existsSync(ROTATION_PATH)) {
     try {
       lastWeekData = JSON.parse(fs.readFileSync(ROTATION_PATH, 'utf8'));
@@ -423,7 +423,7 @@ async function main() {
   const channelId = DM_TARGET;
   console.log(`Slack target: DM to ${DM_TARGET}`);
 
-  const newRotation = { week_of: monday.toISOString().split('T')[0], matt: [], jorge: [], mateo: [] };
+  const newRotation = { week_of: monday.toISOString().split('T')[0], matt: [], mariafernanda: [], mateo: [] };
 
   for (const hcName of HCS) {
     console.log(`\nProcessing ${hcName}...`);
