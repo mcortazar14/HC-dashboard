@@ -217,24 +217,24 @@ async function getSheets() {
 }
 
 async function setupSheetIfEmpty(sheets) {
-  // Verificar si la pestaña "Upsell Tracker" existe; crearla si no
+  // Verificar si la pestaña "HC Pipeline" existe; crearla si no
   const meta = await sheets.spreadsheets.get({ spreadsheetId: UPSELL_SHEET_ID });
-  const tabExists = meta.data.sheets.some(s => s.properties.title === 'Upsell Tracker');
+  const tabExists = meta.data.sheets.some(s => s.properties.title === 'HC Pipeline');
   if (!tabExists) {
-    console.log('Creando pestaña Upsell Tracker...');
+    console.log('Creando pestaña HC Pipeline...');
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: UPSELL_SHEET_ID,
-      requestBody: { requests: [{ addSheet: { properties: { title: 'Upsell Tracker' } } }] }
+      requestBody: { requests: [{ addSheet: { properties: { title: 'HC Pipeline' } } }] }
     });
   }
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: UPSELL_SHEET_ID,
-    range: 'Upsell Tracker!A1:J1'
+    range: 'HC Pipeline!A1:J1'
   });
   const rows = res.data.values || [];
   const meta2 = await sheets.spreadsheets.get({ spreadsheetId: UPSELL_SHEET_ID });
-  const sheetMeta = meta2.data.sheets.find(s => s.properties.title === 'Upsell Tracker');
+  const sheetMeta = meta2.data.sheets.find(s => s.properties.title === 'HC Pipeline');
   const sheetId = sheetMeta ? sheetMeta.properties.sheetId : 0;
 
   const headersExist = rows.length > 0 && rows[0].length > 0;
@@ -243,7 +243,7 @@ async function setupSheetIfEmpty(sheets) {
     const headers = ['ID', 'Cliente', 'HC', 'Status', 'Tipo', 'Phase', 'Días Activo', 'Último Contacto', 'Upsell Stage', 'Notas HC', 'Stage Since'];
     await sheets.spreadsheets.values.update({
       spreadsheetId: UPSELL_SHEET_ID,
-      range: 'Upsell Tracker!A1:K1',
+      range: 'HC Pipeline!A1:K1',
       valueInputOption: 'RAW',
       requestBody: { values: [headers] }
     });
@@ -436,7 +436,7 @@ async function applyUpsellStyle(sheets) {
     spreadsheetId: UPSELL_SHEET_ID,
     fields: 'sheets(properties(sheetId,title),conditionalFormats,bandedRanges)'
   });
-  const sheetMeta = meta.data.sheets.find(s => s.properties.title === 'Upsell Tracker');
+  const sheetMeta = meta.data.sheets.find(s => s.properties.title === 'HC Pipeline');
   if (!sheetMeta) return;
   const sheetId = sheetMeta.properties.sheetId;
 
@@ -464,7 +464,7 @@ async function applyUpsellStyle(sheets) {
 async function handleClosedUpsells(sheets) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: UPSELL_SHEET_ID,
-    range: 'Upsell Tracker!A:N'
+    range: 'HC Pipeline!A:N'
   });
   const rows = res.data.values || [];
   if (rows.length <= 1) return;
@@ -514,14 +514,14 @@ async function handleClosedUpsells(sheets) {
 async function ensureTrackerHeaders(sheets) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: UPSELL_SHEET_ID,
-    range: 'Upsell Tracker!A1:N1'
+    range: 'HC Pipeline!A1:N1'
   });
   const headers = (res.data.values || [[]])[0] || [];
   const updates = [];
-  if (!headers[10]) updates.push({ range: 'Upsell Tracker!K1', values: [['Stage Since']] });
-  if (!headers[11]) updates.push({ range: 'Upsell Tracker!L1', values: [['Last External Contact']] });
-  if (!headers[12]) updates.push({ range: 'Upsell Tracker!M1', values: [['External Channel']] });
-  if (!headers[13]) updates.push({ range: 'Upsell Tracker!N1', values: [['Prev Stage']] });
+  if (!headers[10]) updates.push({ range: 'HC Pipeline!K1', values: [['Stage Since']] });
+  if (!headers[11]) updates.push({ range: 'HC Pipeline!L1', values: [['Last External Contact']] });
+  if (!headers[12]) updates.push({ range: 'HC Pipeline!M1', values: [['External Channel']] });
+  if (!headers[13]) updates.push({ range: 'HC Pipeline!N1', values: [['Prev Stage']] });
   if (updates.length > 0) {
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: UPSELL_SHEET_ID,
@@ -538,7 +538,7 @@ async function syncUpsellSheet(sheets, enriched) {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: UPSELL_SHEET_ID,
-    range: 'Upsell Tracker!A:O'
+    range: 'HC Pipeline!A:O'
   });
   const rows = res.data.values || [];
   const todayStr = new Date().toISOString().split('T')[0];
@@ -590,13 +590,13 @@ async function syncUpsellSheet(sheets, enriched) {
   const lastRow = Math.max(newRows.length + 1, rows.length);
   await sheets.spreadsheets.values.clear({
     spreadsheetId: UPSELL_SHEET_ID,
-    range: 'Upsell Tracker!A2:O' + lastRow
+    range: 'HC Pipeline!A2:O' + lastRow
   });
 
   if (newRows.length > 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId: UPSELL_SHEET_ID,
-      range: 'Upsell Tracker!A2:O' + (newRows.length + 1),
+      range: 'HC Pipeline!A2:O' + (newRows.length + 1),
       valueInputOption: 'RAW',
       requestBody: { values: newRows }
     });
@@ -1335,7 +1335,7 @@ async function updateHCMetricsTracker(sheets, enriched, checkinsByClient, checki
     // Read Upsell Tracker A:O for stage, stageSince, lastExternalContact, clientResponded
     const upsellRes = await sheets.spreadsheets.values.get({
       spreadsheetId: UPSELL_SHEET_ID,
-      range: 'Upsell Tracker!A:O'
+      range: 'HC Pipeline!A:O'
     });
     const upsellRows = upsellRes.data.values || [];
     const upsellMap = {};
